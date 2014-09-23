@@ -76,7 +76,7 @@ class CursorWrapper(object):
 
 class DatabaseFeatures(BaseDatabaseFeatures):
     needs_datetime_string_cast = False
-    can_return_id_from_insert = True
+    can_return_id_from_insert = False
     requires_rollback_on_dirty_transaction = True
     has_real_datatype = True
     can_defer_constraint_checks = True
@@ -106,6 +106,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'iendswith': 'LIKE UPPER(%s)',
     }
 
+    Database = Database
+
     def __init__(self, *args, **kwargs):
         super(DatabaseWrapper, self).__init__(*args, **kwargs)
 
@@ -123,6 +125,65 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         self.introspection = DatabaseIntrospection(self)
         self.validation = BaseDatabaseValidation(self)
         self._pg_version = None
+
+    def get_connection_params(self):
+        settings_dict = self.settings_dict
+        if not settings_dict['NAME']:
+            from django.core.exceptions import ImproperlyConfigured
+            raise ImproperlyConfigured(
+                "settings.DATABASES is improperly configured. "
+                "Please supply the NAME value.")
+        conn_params = {
+            'database': settings_dict['NAME'],
+        }
+        conn_params.update(settings_dict['OPTIONS'])
+        if 'autocommit' in conn_params:
+            del conn_params['autocommit']
+        if 'isolation_level' in conn_params:
+            del conn_params['isolation_level']
+        if settings_dict['USER']:
+            conn_params['user'] = settings_dict['USER']
+        if settings_dict['PASSWORD']:
+            conn_params['password'] = force_str(settings_dict['PASSWORD'])
+        if settings_dict['HOST']:
+            conn_params['host'] = settings_dict['HOST']
+        if settings_dict['PORT']:
+            conn_params['port'] = settings_dict['PORT']
+        return conn_params
+
+    def get_new_connection(self, conn_params):
+        return Database.connect(**conn_params)
+
+    def _set_autocommit(self, autocommit):
+        with self.wrap_database_errors:
+            if self.psycopg2_version >= (2, 4, 2):
+                self.connection.autocommit = autocommit
+            else:
+                if autocommit:
+                    level = psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT
+                else:
+                    level = self.isolation_level
+                self.connection.set_isolation_level(level)
+
+    def init_connection_state(self):
+        settings_dict = self.settings_dict
+        self.connection.set_client_encoding('UTF8')
+        tz = 'UTC' if settings.USE_TZ else settings_dict.get('TIME_ZONE')
+        if tz:
+            try:
+                get_parameter_status = self.connection.get_parameter_status
+            except AttributeError:
+                # psycopg2 < 2.0.12 doesn't have get_parameter_status
+                conn_tz = None
+            else:
+                conn_tz = get_parameter_status('TimeZone')
+
+            if conn_tz != tz:
+                self.connection.cursor().execute(
+                        self.ops.set_time_zone_sql(), [tz])
+                # Commit after setting the time zone (see #17062)
+                self.connection.commit()
+        self.connection.set_isolation_level(self.isolation_level)
 
     def check_constraints(self, table_names=None):
         """
@@ -240,3 +301,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 return self.connection.commit()
             except Database.IntegrityError as e:
                 six.reraise(utils.IntegrityError, utils.IntegrityError(*tuple(e.args)), sys.exc_info()[2])
+
+    @cached_property
+    def psycopg2_version(self):
+        version = psycopg2.__version__.split(' ', 1)[0]
+        return tuple(int(v) for v in version.split('.'))
