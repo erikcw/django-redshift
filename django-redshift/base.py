@@ -7,7 +7,7 @@ import logging
 import sys
 
 from django.db import utils
-from django.db.backends import *
+from django.db.backends import BaseDatabaseFeatures, BaseDatabaseValidation, BaseDatabaseWrapper, cached_property, settings
 from django.db.backends.signals import connection_created
 from django.db.backends.postgresql_psycopg2.client import DatabaseClient
 from django.db.backends.postgresql_psycopg2.creation import DatabaseCreation
