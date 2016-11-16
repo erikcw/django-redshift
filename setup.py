@@ -10,7 +10,7 @@ setup(
     license="MIT",
     url='https://github.com/binarydud/django-redshift',
     packages=['django-redshift'],
-    install_requires=['psycopg2==2.5'],
+    install_requires=['psycopg2==2.6.2'],
     include_package_data=True,
     zip_safe=False,
     classifiers=[
